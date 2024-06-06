@@ -1,0 +1,5 @@
+# python build files
+__pycache__
+.pyc
+# python environment
+venv
