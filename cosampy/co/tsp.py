@@ -105,8 +105,6 @@ class ETSP:
                          ["=" for i in range(oC_rhs.shape[0])]+
                          ["<=" for i in range(stC_rhs.shape[0])]
                         )
-        print(eC.shape, oC.shape, stC.shape)
-        print(eC_rhs.shape, oC_rhs.shape, stC_rhs.shape)
         return np.concatenate((eC,oC,stC)), np.concatenate((eC_rhs,oC_rhs,stC_rhs)), sense
     def ilp_formulation(self, formulation="dfj"):
         C,rhs,sense = self.ilp_constraints(formulation=formulation)
@@ -114,6 +112,7 @@ class ETSP:
     def factor_graph(self, sol=None, formulation="dfj"):
         B = nx.Graph()
         c = self.cost_vector(formulation=formulation)
+        ms = sol.shape[1] - 1
         for i,ci in enumerate(c):
             if sol is None:
                 B.add_node(f"x{i}", x=[0,ci])
@@ -122,12 +121,11 @@ class ETSP:
         C,rhs,s = self.ilp_constraints(formulation=formulation)
         if sol is not None:
             slack = rhs - np.dot(C, sol[:,0])
-            print("slack ", slack.shape)
         for i,rhsi in enumerate(rhs):
             if sol is None:
                 B.add_node(f"c{i}", x=[1,rhsi])
             else:
-                B.add_node(f"c{i}", x=[1,rhsi,slack[i], 0])
+                B.add_node(f"c{i}", x=[1,rhsi,slack[i]]+[0 for _ in range(ms)])
         # add node-constraint edges
         for i in range(C.shape[0]):
             for j in range(C.shape[1]):
@@ -148,29 +146,21 @@ class ETSPSolution:
             yield self.sequence[i-1], self.sequence[i]
         yield self.sequence[-1], self.sequence[0]
     def __eq__(self, other):
-        #print(self.sequence)
-        #print(other.sequence)
-        #print(np.array(self.sequence) == np.array(other.sequence))
-        #print(np.all(np.array(self.sequence) == np.array(other.sequence)))
-
         return np.all(np.array(self.sequence) == np.array(other.sequence))
 
 
 def check_solution(sol: ETSPSolution, pb: ETSP) -> bool:
     nV = pb.number_of_nodes()
     if len(sol.sequence) != nV:
-        print("Bad number of nodes : ", len(sol.sequence), nV)
         return False
     # mark all nodes as non visited
     Q = np.zeros(nV, dtype=bool)
     # check that all nodes are visited once
     for n in sol.sequence:
         if Q[n] == True:
-            print("Visiting node ", n, " twice")
             return False
         else:
             Q[n] = True
-    print("all nodes visited : ", np.all(Q))
     return np.all(Q)
 
 def random_euclidean_tsp(n: int) -> ETSP:

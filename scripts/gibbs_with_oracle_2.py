@@ -24,15 +24,13 @@ from cosampy.co.tsp import *
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 epoch_max = 1000
-iter_max = 100
-num_nodes = 20
-exp_len_max = 1000
+iter_max = 500
+num_nodes = 10
+exp_len_max = 2000
 lr = 0.0001
-batch_size = 128
+batch_size = 512
 
-checkpoint_path = "gibbs_with_oracle_tsp10_4layers/999_model.pt"
-
-output_dir = f"gibbs_with_oracle_tsp{num_nodes}_4layers_transfer"
+output_dir = f"gibbs_with_oracle_2_tsp{num_nodes}_4layers"
 if os.path.isdir(output_dir):
     os.system(f"rm {output_dir}/*")
 os.makedirs(output_dir, exist_ok=True)
@@ -47,6 +45,16 @@ class HammingBall:
             y = self.x0.copy()
             y[i] = not y[i]
             yield y
+class RollBall:
+    def __init__(self, x0):
+        self.x0=x0
+    def __iter__(self):
+        yield self.x0
+        for i in range(self.x0.shape[0]):
+            for j in range(self.x0.shape[1]-1):
+                y = self.x0.copy()
+                y[i,:] = np.roll(y[i,:], j+1)
+                yield y
 class OracleHamming:
     def __init__(self, x0, pb, solmap):
         self.x0 = x0
@@ -56,17 +64,16 @@ class OracleHamming:
     def __len__(self):
         return len(self.neighbors)
     def initialize_neighbors(self):
-        H = HammingBall(self.x0, r=1)
+        H = RollBall(self.x0[:,1:])
         neighbors, weights = [], []
         solution_counts = {}
         c = self.pb.cost_vector()
-        E0 = np.dot(c, self.x0[:,0])
+        sol0 = nearest_neighbor_route_2(c, [], self.pb)
+        E0 = solution_cost(sol0, self.pb)
         for y in H:
-            #if np.all(y[:,1]==self.x0[:,1]) and np.all(y[y[:,1]==1,0] == self.x0[y[:,1]==1,0]):
-            #    continue
             cy = c.copy()
-            cy[ (y[:,0]==0) & (y[:,1]==1) ] = np.sum(c)
-            cy[ (y[:,0]==1) & (y[:,1]==1) ] = 0.0
+            cy[y[:,1]==1] = 0.0
+            cy[y[:,2]==1] = np.sum(c)
             tmp_sol = self.map.get(cy)
             if tmp_sol is None:
                 # solve with oracle
@@ -76,7 +83,7 @@ class OracleHamming:
                 else:
                     solution_counts[tuple(yp.sequence)] = 1
                 ypf = edges_to_flow(yp, self.pb)
-                y[:,0] = ypf
+                y = np.concatenate((np.expand_dims(ypf,1), y), axis=1)
                 E1 = np.dot(c,ypf)
                 self.map.set(cy, (y, yp, E1))
             else:
@@ -93,7 +100,6 @@ class OracleHamming:
             r = edge_list_to_route(el)
             sol = ETSPSolution(r)
             weights[i] /= solution_counts[tuple(sol.sequence)]
-
         return neighbors, np.array(weights)
     def Z(self):
         return np.sum(self.weights)
@@ -147,9 +153,7 @@ class GCN(torch.nn.Module):
         x = F.dropout(x, 0.1)
         return x[data.decision_variable_mask]
 
-# starting weights
-gcn = GCN(in_dim=4, out_dim=2, hidden_dim=64).to(device)
-gcn.load_state_dict(torch.load(checkpoint_path))
+gcn = GCN(in_dim=6, out_dim=2, hidden_dim=64).to(device)
 
 optimizer = torch.optim.Adam(gcn.parameters(), lr=lr)
 
@@ -169,7 +173,8 @@ for epoch in range(epoch_max):
     c = tsp.cost_vector()
     x = edges_to_flow(sol, tsp)
     x = np.expand_dims(x, axis=1)
-    f = np.zeros_like(x)
+    f = np.zeros((x.shape[0], 3))
+    f[:,0] = 1
     xx = np.concatenate((x,f), axis=1)
     best_cost = solution_cost(sol, tsp)
     best_sol = copy.deepcopy(sol)
@@ -279,6 +284,7 @@ for epoch in range(epoch_max):
     ax.set_yscale("log")
     ax.set_xscale("log")
     ax.grid(True)
+
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, "all_loss.png"))
     plt.close(fig)
